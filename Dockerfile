@@ -19,10 +19,12 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
  && rm -rf /var/lib/apt/lists/*
 
 # Install matching ChromeDriver
-RUN MAJOR=$(google-chrome --version \
-            | awk '{print $3}' \
-            | cut -d. -f1) \
- && LATEST=$(wget -qO- https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$MAJOR) \
+RUN CHROME_BIN=$(which google-chrome-stable || which google-chrome) \
+ && echo "Using Chrome binary: $CHROME_BIN" \
+ && MAJOR=$($CHROME_BIN --version | awk '{print $3}' | cut -d. -f1) \
+ && echo "Detected Chrome major version: $MAJOR" \
+ && LATEST=$(wget -qO- "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$MAJOR") \
+ && echo "Downloading ChromeDriver version: $LATEST" \
  && wget -O /tmp/chromedriver.zip \
        "https://chromedriver.storage.googleapis.com/${LATEST}/chromedriver_linux64.zip" \
  && unzip /tmp/chromedriver.zip -d /usr/local/bin \
