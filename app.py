@@ -12,7 +12,7 @@ from selenium.common.exceptions import TimeoutException
 app = Flask(__name__)
 
 # Path to your ChromeDriver executable (adjust as needed)
-CHROMEDRIVER_PATH = "/opt/homebrew/bin/chromedriver"
+CHROMEDRIVER_PATH = "/usr/local/bin/chromedriver"
 
 # Regex to match MM:SS.ms or SS.ms
 TIME_RE = re.compile(r"^(?:\d+:\d+\.\d+|\d+\.\d+)$")
