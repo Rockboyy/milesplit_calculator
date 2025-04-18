@@ -10,18 +10,23 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Google Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
-    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
-        > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && apt-get install -y google-chrome-stable && \
-    rm -rf /var/lib/apt/lists/*
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
+      | apt-key add - \
+ && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update \
+ && apt-get install -y google-chrome-stable \
+ && rm -rf /var/lib/apt/lists/*
 
 # Install matching ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | sed 's/.* //;s/\.[0-9]*$//') && \
-    wget -O /tmp/chromedriver.zip \
-      "https://chromedriver.storage.googleapis.com/${CHROME_VERSION}/chromedriver_linux64.zip" && \
-    unzip /tmp/chromedriver.zip -d /usr/local/bin && \
-    rm /tmp/chromedriver.zip
+RUN MAJOR=$(google-chrome --version \
+            | awk '{print $3}' \
+            | cut -d. -f1) \
+ && LATEST=$(wget -qO- https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$MAJOR) \
+ && wget -O /tmp/chromedriver.zip \
+       "https://chromedriver.storage.googleapis.com/${LATEST}/chromedriver_linux64.zip" \
+ && unzip /tmp/chromedriver.zip -d /usr/local/bin \
+ && rm /tmp/chromedriver.zip
 
 # Set working directory
 WORKDIR /app
