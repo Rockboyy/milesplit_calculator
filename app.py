@@ -24,6 +24,9 @@ def setup_driver():
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-zygote")
     # auto‑download matching ChromeDriver
     driver_path = ChromeDriverManager().install()
     service = Service(driver_path)
