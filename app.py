@@ -40,7 +40,7 @@ def get_event_total(driver, meet_id: str, event_id: int, gender: str):
     driver.get(url)
 
     try:
-        WebDriverWait(driver, 20).until(
+        WebDriverWait(driver, 10).until(
             EC.any_of(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "td.seed")),
                 EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'There are no assignments to display')]"))
