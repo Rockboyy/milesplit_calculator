@@ -1,6 +1,7 @@
 from flask import Flask, request, render_template_string
 import re
 import os
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -9,113 +10,105 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+from webdriver_manager.chrome import ChromeDriverManager
+
 app = Flask(__name__)
 
-# Path to your ChromeDriver executable (adjust as needed)
-CHROMEDRIVER_PATH = "/usr/local/bin/chromedriver"
-
-# Regex to match MM:SS.ms or SS.ms
+# matches either "M:SS.ms" or "SS.ms"
 TIME_RE = re.compile(r"^(?:\d+:\d+\.\d+|\d+\.\d+)$")
 
-# --- Selenium setup ---
 def setup_driver():
-    if not (os.path.isfile(CHROMEDRIVER_PATH) and os.access(CHROMEDRIVER_PATH, os.X_OK)):
-        raise FileNotFoundError(f"chromedriver not found or not executable: {CHROMEDRIVER_PATH}")
     options = Options()
+    # point to the Chrome installed in the container
+    options.binary_location = "/usr/bin/google-chrome-stable"
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
-    return webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=options)
+    # auto‑download matching ChromeDriver
+    driver_path = ChromeDriverManager().install()
+    service = Service(driver_path)
+    return webdriver.Chrome(service=service, options=options)
 
-# --- Time parsing ---
 def parse_time_to_seconds(t: str) -> float:
     if ":" in t:
         mins, rest = t.split(":", 1)
         return int(mins) * 60 + float(rest)
     return float(t)
 
-# --- Event scraping ---
 def get_event_total(driver, meet_id: str, event_id: int, gender: str):
     url = f"https://milesplit.live/meets/{meet_id}/events/{event_id}/assignments/F/{gender}"
     driver.get(url)
-    # wait for seeds or end message
+
     try:
         WebDriverWait(driver, 20).until(
             EC.any_of(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "td.seed")),
-                EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'There are no assignments to display')]") )
+                EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'There are no assignments to display')]"))
             )
         )
     except TimeoutException:
-        # no content
-        return None, True
+        return None, True  # nothing loaded → treat as end
+
     if "There are no assignments to display." in driver.page_source:
         return None, True
 
-    tables = driver.find_elements(By.TAG_NAME, "table")
-    event_total = 0.0
+    total = 0.0
     any_heat = False
-    for tbl in tables:
+    for tbl in driver.find_elements(By.TAG_NAME, "table"):
         seeds = tbl.find_elements(By.CSS_SELECTOR, "td.seed")
         times = []
         for td in seeds:
-            text = td.text.strip()
-            if '-' in text:
+            txt = td.text.strip()
+            if "-" in txt:
                 continue
-            if TIME_RE.match(text):
-                times.append(parse_time_to_seconds(text))
+            if TIME_RE.match(txt):
+                times.append(parse_time_to_seconds(txt))
         if times:
             any_heat = True
-            event_total += max(times)
-    if not any_heat:
-        return None, False
-    return event_total, False
+            total += max(times)
+    return (total, False) if any_heat else (None, False)
 
-# --- Aggregate totals ---
-def calculate_total(meet_id: str, upto_event: int=None) -> float:
+def calculate_total(meet_id: str, upto_event: int = None) -> float:
     driver = setup_driver()
-    total = 0.0
-    event_id = 1
+    grand = 0.0
+    eid = 1
     while True:
-        gender = 'F' if event_id % 2 == 1 else 'M'
-        result, end_flag = get_event_total(driver, meet_id, event_id, gender)
-        if end_flag:
+        gender = 'F' if eid % 2 else 'M'
+        res, done = get_event_total(driver, meet_id, eid, gender)
+        if done:
             break
-        if result is not None:
-            total += result
-        event_id += 1
-        if upto_event and event_id >= upto_event:
+        if res is not None:
+            grand += res
+        eid += 1
+        if upto_event and eid >= upto_event:
             break
     driver.quit()
-    return total
+    return grand
 
-# --- Flask routes ---
 INDEX_HTML = '''
 <!doctype html>
-<html>
-  <head><title>Track Meet Time Calculator</title></head>
-  <body>
-    <h1>Track Meet Time Calculator</h1>
-    <form method="post">
-      <label>Meet ID: <input name="meet_id" required></label><br>
-      <label><input type="radio" name="mode" value="total" checked> Total meet time</label><br>
-      <label><input type="radio" name="mode" value="upto"> Time up to event #</label>
-      <input name="upto_event" size="3" placeholder="Event #"><br>
-      <button type="submit">Calculate</button>
-    </form>
-  </body>
+<html><head><title>Track Meet Time Calculator</title></head>
+<body>
+  <h1>Track Meet Time Calculator</h1>
+  <form method="post">
+    <label>Meet ID: <input name="meet_id" required></label><br>
+    <label><input type="radio" name="mode" value="total" checked> Total meet time</label><br>
+    <label><input type="radio" name="mode" value="upto"> Time up to event #</label>
+    <input name="upto_event" size="3" placeholder="Event #"><br>
+    <button type="submit">Calculate</button>
+  </form>
+</body>
 </html>
 '''
 
 RESULT_HTML = '''
 <!doctype html>
-<html>
-  <head><title>Result</title></head>
-  <body>
-    <h1>Result</h1>
-    <p>{{ description }}: <strong>{{ formatted }}</strong> ({{ seconds }} seconds)</p>
-    <a href="/">↩ Back</a>
-  </body>
+<html><head><title>Result</title></head>
+<body>
+  <h1>Result</h1>
+  <p>{{ description }}: <strong>{{ formatted }}</strong> ({{ seconds }} seconds)</p>
+  <a href="/">↩ Back</a>
+</body>
 </html>
 '''
 
@@ -127,19 +120,24 @@ def index():
         upto = None
         if mode == 'upto':
             try:
-                upto = int(request.form.get('upto_event', '').strip())
+                upto = int(request.form.get('upto_event','').strip())
             except ValueError:
                 upto = None
 
-        seconds = calculate_total(meet_id, upto_event=upto if mode=='upto' else None)
+        seconds = calculate_total(meet_id,
+                                  upto_event=upto if mode=='upto' else None)
         mins = int(seconds // 60)
         secs = seconds - mins * 60
         formatted = f"{mins}:{secs:05.2f}"
-        description = (f"Total time for meet {meet_id}" if mode=='total'
+        description = (f"Total time for meet {meet_id}" 
+                       if mode=='total'
                        else f"Time up to event {upto} for meet {meet_id}")
-        return render_template_string(RESULT_HTML, description=description,
-                                      formatted=formatted, seconds=f"{seconds:.2f}")
+        return render_template_string(RESULT_HTML,
+                                      description=description,
+                                      formatted=formatted,
+                                      seconds=f"{seconds:.2f}")
     return render_template_string(INDEX_HTML)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # on Render this will be managed by gunicorn
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
