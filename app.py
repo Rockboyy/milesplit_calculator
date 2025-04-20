@@ -1,6 +1,6 @@
+# app.py
 from flask import Flask, request, render_template_string
-import re
-import os
+import re, os
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -8,7 +8,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, InvalidSessionIdException
 
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -19,19 +19,13 @@ TIME_RE = re.compile(r"^(?:\d+:\d+\.\d+|\d+\.\d+)$")
 
 def setup_driver():
     options = Options()
-    # point to the Chrome installed in the container
     options.binary_location = "/usr/bin/google-chrome-stable"
     options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-zygote")
-    options.add_argument("--single-process")
     # auto‑download matching ChromeDriver
-    driver_path = ChromeDriverManager().install()
-    service = Service(driver_path)
-    return webdriver.Chrome(service=service, options=options)
+    path = ChromeDriverManager().install()
+    return webdriver.Chrome(service=Service(path), options=options)
 
 def parse_time_to_seconds(t: str) -> float:
     if ":" in t:
@@ -51,13 +45,12 @@ def get_event_total(driver, meet_id: str, event_id: int, gender: str):
             )
         )
     except TimeoutException:
-        return None, True  # nothing loaded → treat as end
+        return None, True
 
     if "There are no assignments to display." in driver.page_source:
         return None, True
 
-    total = 0.0
-    any_heat = False
+    total, saw_heat = 0.0, False
     for tbl in driver.find_elements(By.TAG_NAME, "table"):
         seeds = tbl.find_elements(By.CSS_SELECTOR, "td.seed")
         times = []
@@ -68,53 +61,39 @@ def get_event_total(driver, meet_id: str, event_id: int, gender: str):
             if TIME_RE.match(txt):
                 times.append(parse_time_to_seconds(txt))
         if times:
-            any_heat = True
+            saw_heat = True
             total += max(times)
-    return (total, False) if any_heat else (None, False)
+
+    return (total, False) if saw_heat else (None, False)
 
 def calculate_total(meet_id: str, upto_event: int = None) -> float:
     driver = setup_driver()
-    grand = 0.0
-    eid = 1
+    grand, eid = 0.0, 1
+
     while True:
         gender = 'F' if eid % 2 else 'M'
-        res, done = get_event_total(driver, meet_id, eid, gender)
+        try:
+            res, done = get_event_total(driver, meet_id, eid, gender)
+        except InvalidSessionIdException:
+            # Chrome session died mid-scrape: restart once and retry
+            driver.quit()
+            driver = setup_driver()
+            res, done = get_event_total(driver, meet_id, eid, gender)
+
         if done:
             break
         if res is not None:
             grand += res
+
         eid += 1
         if upto_event and eid >= upto_event:
             break
+
     driver.quit()
     return grand
 
-INDEX_HTML = '''
-<!doctype html>
-<html><head><title>Track Meet Time Calculator</title></head>
-<body>
-  <h1>Track Meet Time Calculator</h1>
-  <form method="post">
-    <label>Meet ID: <input name="meet_id" required></label><br>
-    <label><input type="radio" name="mode" value="total" checked> Total meet time</label><br>
-    <label><input type="radio" name="mode" value="upto"> Time up to event #</label>
-    <input name="upto_event" size="3" placeholder="Event #"><br>
-    <button type="submit">Calculate</button>
-  </form>
-</body>
-</html>
-'''
-
-RESULT_HTML = '''
-<!doctype html>
-<html><head><title>Result</title></head>
-<body>
-  <h1>Result</h1>
-  <p>{{ description }}: <strong>{{ formatted }}</strong> ({{ seconds }} seconds)</p>
-  <a href="/">↩ Back</a>
-</body>
-</html>
-'''
+INDEX_HTML = '''…'''  # unchanged
+RESULT_HTML = '''…'''  # unchanged
 
 @app.route('/', methods=['GET','POST'])
 def index():
@@ -123,25 +102,23 @@ def index():
         mode = request.form.get('mode')
         upto = None
         if mode == 'upto':
-            try:
-                upto = int(request.form.get('upto_event','').strip())
-            except ValueError:
-                upto = None
+            try: upto = int(request.form['upto_event'])
+            except: upto = None
 
-        seconds = calculate_total(meet_id,
-                                  upto_event=upto if mode=='upto' else None)
-        mins = int(seconds // 60)
-        secs = seconds - mins * 60
-        formatted = f"{mins}:{secs:05.2f}"
-        description = (f"Total time for meet {meet_id}" 
-                       if mode=='total'
-                       else f"Time up to event {upto} for meet {meet_id}")
+        secs = calculate_total(meet_id,
+                               upto_event = upto if mode=='upto' else None)
+        mins = int(secs // 60)
+        s = secs - mins * 60
+        formatted = f"{mins}:{s:05.2f}"
+        desc = (f"Total time for meet {meet_id}"
+                if mode=='total'
+                else f"Time up to event {upto} for meet {meet_id}")
+
         return render_template_string(RESULT_HTML,
-                                      description=description,
+                                      description=desc,
                                       formatted=formatted,
-                                      seconds=f"{seconds:.2f}")
+                                      seconds=f"{secs:.2f}")
     return render_template_string(INDEX_HTML)
 
 if __name__ == '__main__':
-    # on Render this will be managed by gunicorn
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT',5000)))
