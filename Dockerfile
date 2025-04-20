@@ -1,7 +1,7 @@
-# ─── Base image ────────────────────────────────────────────────────────────────
+# Dockerfile
 FROM python:3.11-slim
 
-# ─── Install system deps & headless Chrome ────────────────────────────────────
+# system deps + Chrome
 RUN apt-get update && apt-get install -y \
     wget gnupg2 unzip fonts-liberation \
     libxss1 libappindicator3-1 libatk-bridge2.0-0 libatk1.0-0 \
@@ -15,14 +15,13 @@ RUN apt-get update && apt-get install -y \
   && apt-get update && apt-get install -y google-chrome-stable \
   && rm -rf /var/lib/apt/lists/*
 
-# ─── App setup ─────────────────────────────────────────────────────────────────
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY app.py .
 
-# ─── Runtime ──────────────────────────────────────────────────────────────────
 ENV PORT=10000
 EXPOSE 10000
-CMD ["gunicorn", "-b", "0.0.0.0:10000", "app:app", "--workers", "1", "--timeout", "120"]
+
+# single worker, 120s request timeout
+CMD ["gunicorn","-b","0.0.0.0:10000","app:app","--workers","1","--timeout","120"]
