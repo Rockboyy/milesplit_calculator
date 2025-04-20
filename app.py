@@ -27,6 +27,7 @@ def setup_driver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-zygote")
+    options.add_argument("--single-process")
     # auto‑download matching ChromeDriver
     driver_path = ChromeDriverManager().install()
     service = Service(driver_path)
